@@ -1,0 +1,2 @@
+Requirement already satisfied: jinja2 in /home/anaconda3/envs/gpt/lib/python3.9/site-packages (2.11.3)
+Requirement already satisfied: MarkupSafe>=0.23 in /home/anaconda3/envs/gpt/lib/python3.9/site-packages (from jinja2) (2.0.1)

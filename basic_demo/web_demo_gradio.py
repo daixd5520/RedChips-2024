@@ -16,6 +16,8 @@ ensuring that the chat interface displays formatted text correctly.
 
 """
 
+import tempfile
+
 import os
 import gradio as gr
 import torch
@@ -38,7 +40,7 @@ from transformers import (
 ModelType = Union[PreTrainedModel, PeftModelForCausalLM]
 TokenizerType = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
 
-MODEL_PATH = os.environ.get('MODEL_PATH', 'THUDM/chatglm3-6b')
+MODEL_PATH = os.environ.get('MODEL_PATH', '/root/chatglm3-6b-32k')
 TOKENIZER_PATH = os.environ.get("TOKENIZER_PATH", MODEL_PATH)
 
 
@@ -146,32 +148,61 @@ def predict(history, max_length, top_p, temperature):
             history[-1][1] += new_token
             yield history
 
+card_list = ['huawei','tianshu']
 
-with gr.Blocks() as demo:
-    gr.HTML("""<h1 align="center">ChatGLM3-6B Gradio Simple Demo</h1>""")
-    chatbot = gr.Chatbot()
-
+with gr.Blocks() as tab1:
+    gr.HTML("""<h1 align="center">RedChips-Adapter Demo</h1>""")
     with gr.Row():
-        with gr.Column(scale=4):
-            with gr.Column(scale=12):
-                user_input = gr.Textbox(show_label=False, placeholder="Input...", lines=10, container=False)
-            with gr.Column(min_width=32, scale=1):
-                submitBtn = gr.Button("Submit")
+        # 左列：选择厂商、上传代码
         with gr.Column(scale=1):
-            emptyBtn = gr.Button("Clear History")
-            max_length = gr.Slider(0, 32768, value=8192, step=1.0, label="Maximum length", interactive=True)
-            top_p = gr.Slider(0, 1, value=0.8, step=0.01, label="Top P", interactive=True)
-            temperature = gr.Slider(0.01, 1, value=0.6, step=0.01, label="Temperature", interactive=True)
+            card_choose = gr.Accordion("厂商选择")
+            with card_choose:
+                large_language_model = gr.Dropdown(
+                    card_list,
+                    label="国产卡厂商")
+            # 传待适配的代码
+            global tmpdir
+            with tempfile.TemporaryDirectory(dir='.') as tmpdir:
+                inputs = gr.components.File(label="上传代码文件")
+                outputs = gr.components.File(label="下载")
+
+        # 右列：chatbot
+        with gr.Column(scale=3):
+            chatbot = gr.Chatbot()
+            with gr.Row():
+                with gr.Column(scale=4):
+                    with gr.Row():
+                            chatMode = gr.Radio(label = '模式选择',choices = ["通用对话", "适配任务"])
+                    with gr.Column(scale=12):
+                        user_input = gr.Textbox(show_label=False, placeholder="Input...", lines=10, container=False)
+                    with gr.Column(min_width=32, scale=1):
+                        submitBtn = gr.Button("Submit")
+                with gr.Column(scale=1):
+                    with gr.Row():
+                        emptyBtn = gr.Button("Clear History")
+                
+                    max_length = gr.Slider(0, 32768, value=8192, step=1.0, label="Maximum length", interactive=True)
+                    top_p = gr.Slider(0, 1, value=0.8, step=0.01, label="Top P", interactive=True)
+                    temperature = gr.Slider(0.01, 1, value=0.6, step=0.01, label="Temperature", interactive=True)
+
+            def user(query, history):
+                return "", history + [[parse_text(query), ""]]
+            submitBtn.click(user, [user_input, chatbot], [user_input, chatbot], queue=False).then(
+                predict, [chatbot, max_length, top_p, temperature], chatbot
+            )
+            emptyBtn.click(lambda: None, None, chatbot, queue=False)
+
+# tab2:历史适配记录查询
+hist=['his1','his2','his3']
+with gr.Blocks() as tab2:
+    with gr.Column():
+        for _ in hist:
+            with gr.Row():
+                output = gr.Textbox(label=f"history {_}")
 
 
-    def user(query, history):
-        return "", history + [[parse_text(query), ""]]
+demo = gr.TabbedInterface([tab1, tab2], ["适配界面", "历史界面"])
 
-
-    submitBtn.click(user, [user_input, chatbot], [user_input, chatbot], queue=False).then(
-        predict, [chatbot, max_length, top_p, temperature], chatbot
-    )
-    emptyBtn.click(lambda: None, None, chatbot, queue=False)
-
+                
 demo.queue()
 demo.launch(server_name="127.0.0.1", server_port=7870, inbrowser=True, share=False)
