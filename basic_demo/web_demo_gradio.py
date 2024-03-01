@@ -17,6 +17,7 @@ ensuring that the chat interface displays formatted text correctly.
 """
 
 import tempfile
+import shutil
 
 import os
 import gradio as gr
@@ -43,7 +44,7 @@ TokenizerType = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
 MODEL_PATH = os.environ.get('MODEL_PATH', '/root/chatglm3-6b-32k')
 TOKENIZER_PATH = os.environ.get("TOKENIZER_PATH", MODEL_PATH)
 
-SYSPROMPT_HW = """你是一个专业的代码修改工程师，按照如下文档迁移pytorch代码，给出应该修改的代码位置。
+SYSPROMPT_HW = """你是一个专业的代码修改工程师，按照如下文档迁移pytorch代码：
 ## a.在import部分加入import torch_npu
 ## b.指定NPU作为训练设备
 ### 方式一: `.to(device)` 方式
@@ -107,21 +108,14 @@ target = target.npu(args.gpu, non_blocking=True)
 | torch.cuda.Event() | torch_npu.npu.Event() |
 | GPU tensor | 适配昪腾A|处理器后的接口 |
 | --- | --- |
-| torch,tensor([1,2,3],dtype=torch.long,d evice='cuda') | torch
-  tensor([,3]_dtype=torchl.ong,d evice='npu') |
 | torch,tensor([1,2,3],dtype=torch.intdev ice='cuda') | torch,tensor([12,3],dtype=torch.intdev
   ice='npu') |
-| torch.tensor([1,2,3],dtype=torch.half.de vice='cuda') | torch,tensor([12,3],dtype=torch.half.de
-  vice='npu') |
-| torch tensor(1[2,3]_dtypeptorch.foat,d evice='cuda') | torch.tensor(1[2,3]_dtypep=orochfoat,d
-  evice='npu') |
-| torch,tensor([1,2,3],dtype=torchboold evice='cuda') | torch,tensor([12,3],dtype=torchbold
-  evice='npu') |
 | torch.cuda.BoolTensor([1,2,3]) | torch.npuBoolTensor([1,2,3]) |
 | torch.cud.FloatTensor([1,2,3]) | torch.npu.FloatTensor([1,2,3]) |
 | torch.cuda.IntTensor([1,2,3]) | torch.npu.IntTensor([1,2,3]) |
 | torch.cuda.LongTensor ([1,2,3]) | torch.npu.LongTensor([1,2,3]) |
 | torch.cuda.HalfTensor([1,2,3]) | torch.npu.HalfTensor([1,2,3]) |
+下面请将我的代码进行迁移修改，让我们一步一步思考。先判断是否需要更改，再找出需要更改的代码段，最后按照规则修改。
 """
 
 def _resolve_path(path: Union[str, Path]) -> Path:
@@ -129,7 +123,7 @@ def _resolve_path(path: Union[str, Path]) -> Path:
 
 def load_model_and_tokenizer(
         model_dir: Union[str, Path], trust_remote_code: bool = True
-) -> tuple[ModelType, TokenizerType]:
+) -> "tuple[ModelType, TokenizerType]":
     model_dir = _resolve_path(model_dir)
     if (model_dir / 'adapter_config.json').exists():
         model = AutoPeftModelForCausalLM.from_pretrained(
@@ -146,9 +140,7 @@ def load_model_and_tokenizer(
     )
     return model, tokenizer
 
-
 model, tokenizer = load_model_and_tokenizer(MODEL_PATH, trust_remote_code=True)
-
 
 class StopOnTokens(StoppingCriteria):
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
@@ -157,7 +149,6 @@ class StopOnTokens(StoppingCriteria):
             if input_ids[0][-1] == stop_id:
                 return True
         return False
-
 
 def parse_text(text):
     lines = text.split("\n")
@@ -190,24 +181,62 @@ def parse_text(text):
     text = "".join(lines)
     return text
 
+def generate_file(file_obj):
+    print('临时文件夹地址：{}'.format(tmpdir))
+    print('上传文件的地址：{}'.format(file_obj.name)) # 输出上传后的文件在gradio中保存的绝对地址
+    shutil.copy(file_obj.name, tmpdir)
+    # 获取上传Gradio的文件名称
+    FileName=os.path.basename(file_obj.name)
+    print(f"FileName:{FileName}")
+    # 获取拷贝在临时目录的新的文件地址
+    NewfilePath=os.path.join(tmpdir,FileName)
+    print(NewfilePath)
 
-def predict(history, max_length, top_p, temperature):
+    # 打开复制到新路径后的文件
+    if os.path.isfile(NewfilePath):
+        with open(NewfilePath, 'rb') as file_obj:
+            print(f"opened {NewfilePath}.")
+            #在本地电脑打开一个新的文件，并且将上传文件内容写入到新文件
+            outputPath=os.path.join(tmpdir,"New"+FileName)
+            with open(outputPath,'wb') as w:
+                w.write(file_obj.read())
+    else:
+        print(f"{NewfilePath}不是一个文件")
+
+    # 返回新文件的的地址（注意这里）
+    return outputPath
+    
+
+def predict(history, max_length, top_p, temperature,mode):# mode:通用/适配
     stop = StopOnTokens()
+    print("通用对话开启")
     #messages = []
-    messages = [{
-        'role': 'system',
-        'content': SYSPROMPT_HW,
-    }]
-    #messages = SYSPROMPT_HW
-    for idx, (user_msg, model_msg) in enumerate(history):
-        if idx == len(history) - 1 and not model_msg:
-            messages.append({"role": "user", "content": user_msg})
-            break
-        if user_msg:
-            messages.append({"role": "user", "content": user_msg})
-        if model_msg:
-            messages.append({"role": "assistant", "content": model_msg})
+    if mode=="通用对话":
+        messages = []
+        print("通用对话开启")
+        for idx, (user_msg, model_msg) in enumerate(history):
+            if idx == len(history) - 1 and not model_msg:
+                messages.append({"role": "user", "content": user_msg})
+                break
+            if user_msg:
+                messages.append({"role": "user", "content": user_msg})
+            if model_msg:
+                messages.append({"role": "assistant", "content": model_msg})
+    else:
+        messages = []
+        print("适配模式开启")
+        for idx, (user_msg, model_msg) in enumerate(history):
+            if idx == len(history) - 1 and not model_msg:
+                #messages.append({"role":"system","content": SYSPROMPT_HW})
+                messages.append({"role": "user", "content": SYSPROMPT_HW+user_msg})
+                break
+            if user_msg:
+                messages.append({"role": "user", "content": user_msg})
+            if model_msg:
+                messages.append({"role": "assistant", "content": model_msg})
 
+    
+    print(f"selected_mode:{mode}")
     print("\n\n====conversation====\n", messages)
     model_inputs = tokenizer.apply_chat_template(messages,
                                                  add_generation_prompt=True,
@@ -239,24 +268,30 @@ with gr.Blocks() as tab1:
     with gr.Row():
         # 左列：选择厂商、上传代码
         with gr.Column(scale=1):
+            #厂商选择
             card_choose = gr.Accordion("厂商选择")
             with card_choose:
                 large_language_model = gr.Dropdown(
                     card_list,
                     label="国产卡厂商")
-            # 传待适配的代码
+            # 上传待适配的代码
             global tmpdir
             with tempfile.TemporaryDirectory(dir='.') as tmpdir:
                 inputs = gr.components.File(label="上传代码文件")
-                outputs = gr.components.File(label="下载")
+                outputs = gr.components.File(label="下载")                
+                uploadAndDownload=gr.Interface(fn=generate_file, inputs=inputs, outputs=outputs,
+                      description="支持上传模型实现的.py文件、txt文件"
+      )
 
         # 右列：chatbot
+        # selected_mode = 0
         with gr.Column(scale=3):
             chatbot = gr.Chatbot()
             with gr.Row():
                 with gr.Column(scale=4):
                     with gr.Row():
-                            chatMode = gr.Radio(label = '模式选择',choices = ["通用对话", "适配任务"])
+                        chatMode = gr.Radio(label = '模式选择',choices = ["通用对话", "适配任务"])
+                        
                     with gr.Column(scale=12):
                         user_input = gr.Textbox(show_label=False, placeholder="Input...", lines=10, container=False)
                     with gr.Column(min_width=32, scale=1):
@@ -271,8 +306,9 @@ with gr.Blocks() as tab1:
 
             def user(query, history):
                 return "", history + [[parse_text(query), ""]]
+            
             submitBtn.click(user, [user_input, chatbot], [user_input, chatbot], queue=False).then(
-                predict, [chatbot, max_length, top_p, temperature], chatbot
+                predict, [chatbot, max_length, top_p, temperature,chatMode], chatbot
             )
             emptyBtn.click(lambda: None, None, chatbot, queue=False)
 
