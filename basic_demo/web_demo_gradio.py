@@ -38,10 +38,11 @@ from transformers import (
     TextIteratorStreamer
 )
 
+global tmpdir
 ModelType = Union[PreTrainedModel, PeftModelForCausalLM]
 TokenizerType = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
 
-MODEL_PATH = os.environ.get('MODEL_PATH', '/root/chatglm3-6b-32k')
+MODEL_PATH = os.environ.get('MODEL_PATH', '/bishe/chatglm3-6b-32k')
 TOKENIZER_PATH = os.environ.get("TOKENIZER_PATH", MODEL_PATH)
 
 SYSPROMPT_HW = """你是一个专业的代码修改工程师，按照如下文档迁移pytorch代码：
@@ -118,6 +119,7 @@ target = target.npu(args.gpu, non_blocking=True)
 下面请将我的代码进行迁移修改，让我们一步一步思考。先判断是否需要更改，再找出需要更改的代码段，最后按照规则修改。
 """
 
+
 def _resolve_path(path: Union[str, Path]) -> Path:
     return Path(path).expanduser().resolve()
 
@@ -181,31 +183,47 @@ def parse_text(text):
     text = "".join(lines)
     return text
 
-def generate_file(file_obj):
-    print('临时文件夹地址：{}'.format(tmpdir))
-    print('上传文件的地址：{}'.format(file_obj.name)) # 输出上传后的文件在gradio中保存的绝对地址
-    shutil.copy(file_obj.name, tmpdir)
-    # 获取上传Gradio的文件名称
-    FileName=os.path.basename(file_obj.name)
-    print(f"FileName:{FileName}")
-    # 获取拷贝在临时目录的新的文件地址
-    NewfilePath=os.path.join(tmpdir,FileName)
-    print(NewfilePath)
 
-    # 打开复制到新路径后的文件
-    if os.path.isfile(NewfilePath):
-        with open(NewfilePath, 'rb') as file_obj:
-            print(f"opened {NewfilePath}.")
-            #在本地电脑打开一个新的文件，并且将上传文件内容写入到新文件
-            outputPath=os.path.join(tmpdir,"New"+FileName)
-            with open(outputPath,'wb') as w:
-                w.write(file_obj.read())
-    else:
-        print(f"{NewfilePath}不是一个文件")
 
-    # 返回新文件的的地址（注意这里）
-    return outputPath
+def GenNewFile(path):
+    with open(path, 'r') as file:
+        code2beModified = file.read()
+
+    # 提问并获取ChatGLM3的回答
+    question = f"What would you modify in this python code: {code2beModified}"
+    inputs = tokenizer([question], return_tensors="pt")
+    output = model.generate(**inputs)
+
+    # 将回答转换为文本并写入新的python文件
+    answer = tokenizer.decode(output[0], skip_special_tokens=True)
+    new_file_path = os.path.join(os.path.dirname(path), "modified_" + os.path.basename(path))
     
+    with open(new_file_path, 'w') as new_file:
+        new_file.write(answer)
+
+    return new_file_path
+
+
+
+
+
+def generate_file(file_obj):
+    outputPath = None
+
+    print('临时文件夹地址：{}'.format(tmpdir))
+    print('上传文件的地址：{}'.format(file_obj.name))# 输出上传后的文件在gradio中保存的绝对地址
+
+    FileName = os.path.basename(file_obj.name)
+    print(f"FileName:{FileName}")
+    SavedfilePath = os.path.join(tmpdir, FileName)
+    print(f"SavedfilePath:{SavedfilePath}")
+    if not os.path.exists(tmpdir):
+        os.makedirs(tmpdir)
+    shutil.copy(file_obj.name, SavedfilePath)#将上传的文件保存至tmpdir中
+
+    NewfilePath = GenNewFile(SavedfilePath)
+    
+    return NewfilePath
 
 def predict(history, max_length, top_p, temperature,mode):# mode:通用/适配
     stop = StopOnTokens()
@@ -275,13 +293,13 @@ with gr.Blocks() as tab1:
                     card_list,
                     label="国产卡厂商")
             # 上传待适配的代码
-            global tmpdir
             with tempfile.TemporaryDirectory(dir='.') as tmpdir:
+                print(f"tmpdir:{tmpdir}")
+                print(f"tmpdir exist:{os.path.exists(tmpdir)}")
                 inputs = gr.components.File(label="上传代码文件")
                 outputs = gr.components.File(label="下载")                
                 uploadAndDownload=gr.Interface(fn=generate_file, inputs=inputs, outputs=outputs,
-                      description="支持上传模型实现的.py文件、txt文件"
-      )
+                      description="支持上传模型实现的.py文件、txt文件")
 
         # 右列：chatbot
         # selected_mode = 0
