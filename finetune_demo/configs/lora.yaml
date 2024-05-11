@@ -1,10 +1,10 @@
 data_config:
   train_file: train.json
-  val_file: dev.json
-  test_file: dev.json
+  val_file: eval.json
+  test_file: eval.json
   num_proc: 16
-max_input_length: 128
-max_output_length: 256
+max_input_length: 1024
+max_output_length: 1024
 training_args:
   # see `transformers.Seq2SeqTrainingArguments`
   output_dir: ./output
@@ -33,10 +33,10 @@ training_args:
   generation_config:
     max_new_tokens: 256
   # set your absolute deepspeed path here
-  #deepspeed: ds_zero_2.json
+  #deepspeed: /home/dxd/bishe/RedChips-2024/finetune_demo/configs/ds_zero_3.json
 peft_config:
   peft_type: LORA
   task_type: CAUSAL_LM
-  r: 8
-  lora_alpha: 32
+  r: 16
+  lora_alpha: 64
   lora_dropout: 0.1
